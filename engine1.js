@@ -42,8 +42,8 @@ function Engine1(args) {
 	var iFps = 0;
 	var mousePosition = [0, 0];
 	var mouseDown = false;
-	var container = jQuery('<div id="Engine1" style="position: absolute; left: 0px; top: 0px; min-width: 800px; min-height: 600px; width: 100%; height: 100%;"></div>');
-	var stage = jQuery('<div id="Stage" style="position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;"></div>');
+	var container = jQuery('<div id="engine1"></div>');
+	var stage = jQuery('<div id="stage"></div>');
 
 	/* --------------------------------------------------
 	    PREP ENVIRONMENT
@@ -435,6 +435,7 @@ function Engine1(args) {
 		 * Advances to the 'run' stage of the scene
 		 */
 		function run() {
+			stage.attr('class', sceneName);
 			//clone the shadow dom to the view
 			action('core-loop', 'scene-' + sceneName + '-DOM', function (api) {
 				//copy the shadowDOM into the stage
@@ -696,7 +697,7 @@ function Engine1(args) {
 			scenes[sceneName].shadowDOM.appendChild(elements[sceneName][elementName].node);
 			var hookName = 'scene-update';
 		} else {
-			$('#Engine1').append(elements[sceneName][elementName].node);
+			container.append(elements[sceneName][elementName].node);
 			var hookName = 'core-loop';
 		}
 
@@ -764,10 +765,23 @@ function Engine1(args) {
 					"height": elements[sceneName][elementName].size[1],
 					"position": "absolute"
 				});
+
+				if (anchorX === "left") {
+					delete elements[sceneName][elementName].CSS["right"];
+				} else {
+					delete elements[sceneName][elementName].CSS["left"];
+				}
+				if (anchorY === "top") {
+					delete elements[sceneName][elementName].CSS["bottom"];
+				} else {
+					delete elements[sceneName][elementName].CSS["top"];
+				}
+
+
 				elements[sceneName][elementName].CSS[anchorX] = positionX;
 				elements[sceneName][elementName].CSS[anchorY] = positionY;
-				
-				jQuery(elements[sceneName][elementName].node).css(elements[sceneName][elementName].CSS);
+
+				jQuery(elements[sceneName][elementName].node).attr('style', '').css(elements[sceneName][elementName].CSS);
 			}
 		});
 
@@ -1041,6 +1055,51 @@ function Engine1(args) {
 
 		function motionTween(finalPosition, tweenDuration, callback) {
 
+			var element = elements[sceneName][elementName];
+
+			var framesLeft = tweenDuration;
+
+			//if center or centered
+			if(finalPosition[0] === 'center'){
+				finalPosition[0] = (stage.width() - element.size[0]) / 2;
+			}
+			if(finalPosition[1] === 'center'){
+				finalPosition[1] = (stage.height() - element.height()) / 2;
+			}
+
+			//create a process
+			action('scene-update', 'motion-tween-' + elementName, function (api) {
+
+				var distance = [];
+
+				//calculate each axis
+				for (var i = 0; i < 3; i += 1) {
+					//find the total distance to travel in the remaining frames
+					//NOTE: end coords minus current coords
+					var totalDistance = (finalPosition[i] || 0) - element.position[i];
+
+					//find the distance to travel this frame in this axis
+					distance[i] = Math.round(( totalDistance / framesLeft ) + element.position[i]);
+				}
+
+				//apply the new location
+				element.position[0] = distance[0];
+				element.position[1] = distance[1];
+				element.position[2] = distance[2];
+
+				if ( framesLeft > 1 ) {
+					//remove one frame from the frameLength
+					framesLeft -= 1;
+				} else {
+
+					//kill the process
+					api.kill();
+					//run the callback
+					if (callback) {
+						callback();
+					}
+				}
+			});
 		}
 
 		function bind(type, callback1, callback2, minAlpha) {
@@ -1111,8 +1170,9 @@ function Engine1(args) {
 				"sheet": spriteSheet,
 				"animate": spriteAnimate
 			},
-			"move": {
-				"sequence": motionSequence
+			"motion": {
+				"sequence": motionSequence,
+				"tween": motionTween
 			},
 			"bind": bind,
 			"click": click,
