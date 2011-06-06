@@ -976,6 +976,73 @@ function Engine1(args) {
 			}
 		}
 
+		function motionSequence(sequence, frameInterval, callback, useRelativeMotion) {
+
+			var i = 0;
+			var iF = 0;
+			var element = elements[sceneName][elementName];
+
+			//create an action for the tween
+			action('scene-update', 'motion-sequence-' + elementName, function (api) {
+
+				if(i < frameInterval) {
+					i += 1;
+				} else {
+
+					//grab the current frame
+					var frame = sequence[iF];
+
+					var xy = [];
+
+					//calculate the new position of the element
+					if (useRelativeMotion) {
+
+						//get the current position before the current frame is applied
+						var _xy = element.position;
+
+						//calculate the new pos
+						xy = [
+							_xy[0] + frame[0],
+							_xy[1] + frame[1]
+						];
+
+						//if supplied add the z-index
+						if (frame[2]) {
+							xy[2] = _xy[2] + frame[2];
+						}
+
+					} else {
+						//calculate the new position
+						xy = frame;
+					}
+
+					//move the elements position
+					elements[sceneName][elementName].position[0] = xy[0];
+					elements[sceneName][elementName].position[1] = xy[1];
+					elements[sceneName][elementName].position[2] = xy[2];
+
+					if (iF + 1 < sequence.length) {
+						//advance the current frame
+						iF += 1;
+					} else {
+						//kill the process
+						api.kill();
+
+						//run the call back
+						if (typeof callback === "funtion") {
+							callback();
+						}
+					}
+					i = 0;
+				}
+
+			});
+		}
+
+		function motionTween(finalPosition, tweenDuration, callback) {
+
+		}
+
 		function bind(type, callback1, callback2, minAlpha) {
 			//check the arguments
 			if (
@@ -1043,6 +1110,9 @@ function Engine1(args) {
 			"sprite": {
 				"sheet": spriteSheet,
 				"animate": spriteAnimate
+			},
+			"move": {
+				"sequence": motionSequence
 			},
 			"bind": bind,
 			"click": click,
