@@ -36,6 +36,7 @@ function Engine1(args) {
 
 	//environment
 	var version = "0.04";
+	var stageSize = [0, 0];
 	var windowSize = [0, 0];
 	var paused = false;
 	var fps = 0;
@@ -112,12 +113,24 @@ function Engine1(args) {
 	/* --------------------------------------------------
 	    WINDOW PROPERTIES
 	   -------------------------------------------------- */
-	action('second-loop', 'window-dim-counter', function(){
-		windowSize = [
+	action('core-loop', 'window-dim-counter', function(){
+		stageSize = [
 			stage.width(),
 			stage.height()
 		];
+		windowSize = [
+			container.width(),
+			container.height()
+		];
 	});
+
+	function getStageSize() {
+		return stageSize;
+	}
+
+	function getWindowSize() {
+		return windowSize;
+	}
 
 	/* --------------------------------------------------
 	    FRAME COUNT
@@ -387,7 +400,7 @@ function Engine1(args) {
 			LoadingScreen.addClass('loadingScreen');
 		}
 
-		function newElement(name, spriteSheet, x, y, w, h){
+		function newElement(name, spriteSheet, [x, y], [w, h]){
 
 			//create the element and configure
 			var element = Element(sceneName, name);
@@ -399,7 +412,7 @@ function Engine1(args) {
 			return element;
 		}
 
-		function newStaticElement(name, spriteUrl, x, y, w, h){
+		function newStaticElement(name, spriteUrl, [x, y], [w, h]){
 
 			//create the element and configure
 			var element = StaticElement(sceneName, name);
@@ -411,11 +424,17 @@ function Engine1(args) {
 			return element;
 		}
 
-		function newTextElement(text, x, y, className) {
-			var textElement = TextElement(sceneName, 'textElement');
+		function newTextElement(elementName, text, [x, y], [w, h], className) {
+			var textElement = TextElement(sceneName, elementName);
 			textElement.position(x, y);
+			textElement.size(w, h);
 			textElement.html(text);
 			textElement.addClass(className);
+			textElement.hover(function () {
+				textElement.addClass('hover');
+			}, function() {
+				textElement.removeClass('hover');
+			});
 			return textElement;
 		}
 
@@ -435,6 +454,7 @@ function Engine1(args) {
 		 * Advances to the 'run' stage of the scene
 		 */
 		function run() {
+			var hasRun = false;
 			stage.attr('class', sceneName);
 			//clone the shadow dom to the view
 			action('core-loop', 'scene-' + sceneName + '-DOM', function (api) {
@@ -443,15 +463,19 @@ function Engine1(args) {
 				stage.append(scenes[sceneName].shadowDOM.cloneNode(true));
 				//fire the 'scene-update' hook
 				hook('scene-update');
+				if(!hasRun){
+					hook('scene-run-' + sceneName);
+					hasRun = true;
+				}
 			});
-			hook('scene-run-' + sceneName);
+			var i =0;
 		}
 
 		/**
 		 * Advances to the 'exit' stage of the scene
 		 */
 		function exit() {
-			hook('scene-exit-' + sceneName);
+			hook('scene-exit-' + sceneName, arguments[0]);
 		}
 
 		/* --------------------------------------------------
@@ -463,20 +487,18 @@ function Engine1(args) {
 		 * @param callback {function}
 		 */
 		function onSetup(callback) {
-			//TODO: verify
 
 			//clone the base api
-			var api = {
-				//TODO: Create a loading screen element
+			var callbackApi = {
 				"loadingScreen": LoadingScreenElement,
 				"newSpriteSheet": newSpriteSheet,
 				"run": run,
 				"exit": exit
 			};
 
-			action('scene-setup-' + sceneName, function (aApi) {
-				callback(api);
-				aApi.kill();
+			action('scene-setup-' + sceneName, 'scene-setup-' + sceneName, function () {
+				clearAction('scene-setup-' + sceneName, 'scene-setup-' + sceneName);
+				callback(callbackApi);
 			});
 		}
 
@@ -485,18 +507,18 @@ function Engine1(args) {
 		 * @param callback {function}
 		 */
 		function onRun(callback) {
-			//TODO: verify
 
-			var api = {
+			var callbackApi = {
 				"newElement": newElement,
+				"newTextElement": newTextElement,
 				"newStaticElement": newStaticElement,
 				"newView": newView,
 				"exit": exit
 			};
 			
-			action('scene-run-' + sceneName, function (aApi) {
-				callback(api);
-				aApi.kill();
+			action('scene-run-' + sceneName, 'scene-run-' + sceneName, function (aApi) {
+				action('scene-run-' + sceneName, 'scene-run-' + sceneName);
+				callback(callbackApi);
 			});
 		}
 
@@ -505,16 +527,14 @@ function Engine1(args) {
 		 * @param callback {function}
 		 */
 		function onExit(callback) {
-			//TODO: verify
 
-			var api = {
+			var callbackApi = {
 				"loadScene": loadScene
-				//TODO add cleanup functions
 			};
 			
-			action('scene-exit-' + sceneName, function (aApi) {
-				callback(api);
-				aApi.kill();
+			action('scene-exit-' + sceneName, 'scene-exit-' + sceneName, function (args) {
+				clearAction('scene-exit-' + sceneName, 'scene-exit-' + sceneName);
+				callback(callbackApi, args);
 			});
 		}
 
@@ -522,7 +542,6 @@ function Engine1(args) {
 		 * Returns the scene name.
 		 */
 		function name() {
-			//TODO: verify
 			return sceneName;
 		}
 
@@ -532,7 +551,9 @@ function Engine1(args) {
 			"go": setup,
 			"onSetup": onSetup,
 			"onRun": onRun,
-			"onExit": onExit
+			"onExit": onExit,
+			"height": stage.height,
+			"width": stage.width
 		}
 	}
 
@@ -554,7 +575,6 @@ function Engine1(args) {
 	 * @param spriteSheetName {string}
 	 */
 	function SpriteSheet(spriteSheetName) {
-		//TODO: Write
 		//create a new sprite sheet entry
 		sprites[spriteSheetName] = {
 			"size": false,
@@ -664,7 +684,6 @@ function Engine1(args) {
 	 * @param elementName {string}
 	 */
 	function Element(sceneName, elementName) {
-		//TODO: Write
 
 		if (typeof elements[sceneName][elementName] !== "undefined") {
 			throwError('Cannot create Element "' + elementName + '". It already exists', 'failure');
@@ -702,11 +721,7 @@ function Engine1(args) {
 		}
 
 		//create an element runtime
-		//TODO add this hook to the end of the scene's dom copy process
-		action(hookName, 'update-element-' + elementName, function(api){
-
-			//save the action api
-			actions.dom['update-element-' + elementName] = api;
+		action(hookName, 'update-element-' + elementName, function(){
 
 			if (elements[sceneName][elementName].CSSUpdated){
 				elements[sceneName][elementName].CSSUpdated = false;
@@ -717,11 +732,11 @@ function Engine1(args) {
 
 				//if the size is full
 				if (fullWidth) {
-					elements[sceneName][elementName].size[0] = stage.width();
+					elements[sceneName][elementName].size[0] = stageSize[0];
 					elements[sceneName][elementName].CSSUpdated = true;
 				}
 				if (fullHeight) {
-					elements[sceneName][elementName].size[1] = stage.height();
+					elements[sceneName][elementName].size[1] = stageSize[1];
 					elements[sceneName][elementName].CSSUpdated = true;
 				}
 
@@ -731,11 +746,11 @@ function Engine1(args) {
 
 				//if the position is center
 				if (centerX) {
-					elements[sceneName][elementName].position[0] = Math.floor((stage.width() - elements[sceneName][elementName].size[0]) / 2);
+					elements[sceneName][elementName].position[0] = Math.floor((stageSize[0] - elements[sceneName][elementName].size[0]) / 2);
 					elements[sceneName][elementName].CSSUpdated = true;
 				}
 				if (centerY) {
-					elements[sceneName][elementName].position[1] = Math.floor((stage.height() - elements[sceneName][elementName].size[1]) / 2);
+					elements[sceneName][elementName].position[1] = Math.floor((stageSize[1] - elements[sceneName][elementName].size[1]) / 2);
 					elements[sceneName][elementName].CSSUpdated = true;
 				}
 
@@ -789,7 +804,6 @@ function Engine1(args) {
 		 * Returns the name of the element
 		 */
 		function name() {
-			//TODO: Verify
 			return elementName;
 		}
 
@@ -797,7 +811,6 @@ function Engine1(args) {
 		 * Returns the name of the element's scene
 		 */
 		function scene() {
-			//TODO: Verify
 			return sceneName;
 		}
 
@@ -805,7 +818,6 @@ function Engine1(args) {
 		 * Returns the element's node
 		 */
 		function node() {
-			//TODO: Verify
 			return elements[sceneName][elementName].node;
 		}
 
@@ -816,7 +828,6 @@ function Engine1(args) {
 		 * @param z {int} [optional]
 		 */
 		function position(x, y, z){
-			//TODO Verify
 			var bool = false;
 
 			//check for centering
@@ -853,7 +864,6 @@ function Engine1(args) {
 		 * @param height {int}
 		 */
 		function size(width, height){
-			//TODO: Verify
 			var bool = false;
 			if (width === "full") {
 				elements[sceneName][elementName].size[2] = true;
@@ -883,7 +893,6 @@ function Engine1(args) {
 		 * @param value {int|string} [optional]
 		 */
 		function css(cssObject, value) {
-			//TODO: Verify
 			if(typeof cssObject === "string" || typeof cssObject === "object") {
 				//check for string input or object input
 				if (typeof cssObject === "string") {
@@ -971,7 +980,7 @@ function Engine1(args) {
 						if (loop) {
 							fI = 0;
 						} else {
-							api.kill();
+							clearAction('scene-update', actionId);
 						}
 					}
 					i = 0;
@@ -1040,7 +1049,7 @@ function Engine1(args) {
 						iF += 1;
 					} else {
 						//kill the process
-						api.kill();
+						clearAction('scene-update', 'motion-sequence-' + elementName);
 
 						//run the call back
 						if (typeof callback === "funtion") {
@@ -1093,7 +1102,8 @@ function Engine1(args) {
 				} else {
 
 					//kill the process
-					api.kill();
+					clearAction('scene-update', 'motion-tween-' + elementName);
+					
 					//run the callback
 					if (callback) {
 						callback();
@@ -1251,8 +1261,10 @@ function Engine1(args) {
 		textElement.size('auto', 'auto');
 		return {
 			"html": textElement.html,
+			"size": textElement.size,
 			"position": textElement.position,
 			"addClass": textElement.addClass,
+			"removeClass": textElement.removeClass,
 			"hover": textElement.hover,
 			"click": textElement.click
 		};
@@ -1264,14 +1276,6 @@ function Engine1(args) {
 	   -------------------------------------------------- */
 
 	/**
-	 * Converts a function's 'arguments' object to an array
-	 * @param args
-	 */
-	function parseArgs(args) {
-		return Array.prototype.slice.call(args);
-	}
-
-	/**
 	 * Displays information about engine 1 in screen
 	 */
 	function debug () {
@@ -1280,12 +1284,6 @@ function Engine1(args) {
 		FPSElement.position(20, 20, 1000000);
 		FPSElement.html('<h1>FPS ' + config.fps + '=>?</h1>');
 
-		//create the info element
-		var infoElement = DebugElement('info');
-		infoElement.position(-20, -20, 1000000);
-		var hooksString = '<h1>SYSTEM HOOKS:</h1><ul><li>None</li></ul>';
-		infoElement.html(hooksString);
-
 		//create the version element
 		var versionElement = DebugElement('version');
 		versionElement.position(-20, 20, 1000000);
@@ -1293,42 +1291,13 @@ function Engine1(args) {
 
 		//per second actions
 		action('second-loop', 'debug-fps-OSD', function () {
-
 			//update the fps counter
 			FPSElement.html('<h1>FPS ' + config.fps + '=>' + fps + '</h1>');
-			
-			//update the info element
-			var hooksString = '<h1>SYSTEM HOOKS:</h1>' + dumpHooks();
-			infoElement.html(hooksString);
-
 		});
 
 		action('window-blur', 'debug-fps-blur-handler', function () {
 			FPSElement.html('<h1>FPS 0=>PAUSED</h1>');
 		});
-
-		function dumpHooks() {
-			var output = '<ul>';
-			for (var key in hooks) {
-				if (hooks.hasOwnProperty(key)) {
-					var l = hooks[key].actionStack.length;
-					var secondRow = '<ul>';
-					var unknown = 0;
-					for (var action in hooks[key].actionStack) {
-						if (hooks[key].actionStack.hasOwnProperty(action)) {
-							if(hooks[key].actionStack[action].name) {
-								secondRow += '<li>' + hooks[key].actionStack[action].name + '</li>';
-							} else {
-								unknown += 1;
-							}
-						}
-					}
-					secondRow += (unknown ? '<li>' + unknown + ' unknown</li>' : '' ) + '</ul>';
-					output += '<li>' + key + ' has ' + l + ' callback' + (l > 1 ? 's' : '') + '.' + secondRow + '</li>';
-				}
-			}
-			return output += '</ul>';
-		}
 	}
 
 	/**
@@ -1337,7 +1306,6 @@ function Engine1(args) {
 	 * @param type {string} [optional]
 	 */
 	function throwError(description, type) {
-		//TODO: verify
 		//add the error
 		errors.push({
 			"type": type,
@@ -1356,108 +1324,70 @@ function Engine1(args) {
 	}
 
 	/**
-	 * Registers a new hook
-	 * @param hookName
+	 * Run all actions attached to a hook
+	 * @param hookName {string}
 	 */
 	function hook(hookName) {
-		//TODO: verify
 
-		var args = parseArgs(arguments);
+		//make the arguments array into an array
+		var args = Array.prototype.slice.call(arguments, 0);
+		args.shift();
 
-		function exec(index, action) {
+		////
 
-			/**
-			 * Deletes the current action
-			 */
-			function kill() {
-				//delete the action
-				hooks[hookName].actionStack.remove(index, 1);
-			}
-
-			//setup the api
-			var api = {
-				"kill": kill
-			};
-
-			//execute the callback
-			action.callback(api, args);
-
-		}
-
-		//find the hook
-		if(typeof hooks[hookName] !== "undefined"){
-
-			//loop through and execute its callbacks
-			for (var i = 0; i < hooks[hookName].actionStack.length; i += 1) {
-
-				//execute the action passing it the hook's arguments
-				exec(i, hooks[hookName].actionStack[i]);
-			}
-
-			//clear the hook if empty
-			if(!hooks[hookName].actionStack.length){
-				delete hooks[hookName];
+		//get the hook requested
+		if (hooks[hookName]) {
+			for (var action in hooks[hookName]) {
+				if (hooks[hookName].hasOwnProperty(action)) {
+					hooks[hookName][action](args);
+				}
 			}
 		}
 	}
 
 	/**
-	 * Registers a callback to be fired when a specified hook is executed
-	 * @param hookName
-	 * @param callback
+	 * Attach an action to a hook
+	 * @param hookName {string}
+	 * @param actionName {string}
+	 * @param callback {function}
 	 */
 	function action(hookName, actionName, callback) {
 
-		//check to see if the hook is defined. default to the core-loop
-		if(typeof callback !== "function" && typeof hookName === "function"){
-			//move the callback to the correct argument
-			callback = hookName;
+		//EXECUTE ACTION
+		function exec(args) {
 
-			//set the action name to false and the hook to the core-loop
-			actionName = false;
-			hookName = 'core-loop';
-		}
-
-		//check to see if the action even has a name
-		if(typeof callback !== "function" && typeof actionName === "function"){
-			//move the callback to the correct argument
-			callback = actionName;
-
-			//set the action name to false
-			actionName = false;
-		}
-
-		//check to make sure a real callback is given
-		if (typeof callback === "function") {
-
-			//create the hook if it doesn't exist
-			if (typeof hooks[hookName] === "undefined"){
-				//create the action stack
-				hooks[hookName] = {};
+			if (typeof callback === "function") {
+				callback(args);
+			} else {
+				clearAction(hookName, actionName);
 			}
 
-			//create the hook if it doesn't exist
-			if (typeof hooks[hookName].actionStack === "undefined"){
-				//create the action stack
-				hooks[hookName].actionStack = [];
-			}
-
-			//define the action
-			var action = {
-				"name": actionName,
-				"callback": callback
-			};
-
-			//add the data
-			hooks[hookName].actionStack.push(action);
-
-			return true;
 		}
 
-		//throw error
-		throwError('Action ' + (actionName || '') + ' for hook "' + hookName + '" could not be set. An invalid callback was supplied.', 'failure');
+		//create the hook if it does not exist
+		if(!hooks[hookName]) {
+			hooks[hookName] = {};
+		}
 
-		return false;
+		hooks[hookName][actionName] = exec;
+
+	}
+
+	/**
+	 * Clear an action
+	 * @param hookName
+	 * @param actionName
+	 */
+	function clearAction(hookName, actionName) {
+		delete hooks[hookName][actionName];
+	}
+
+	/**
+	 * Clear all actions attached to a hook
+	 * @param hookName
+	 */
+	function clearHook(hookName) {
+		delete hooks[hookName];
 	}
 
 	// ENGINE API
@@ -1468,6 +1398,10 @@ function Engine1(args) {
 		"hook": hook,
 		//NEW ACTION
 		"action": action,
+		//GET STAGE SIZE
+		"getStageSize": getStageSize,
+		//GET WINDOW SIZE
+		"getWindowSize": getWindowSize,
 		//WINDOWBLUR
 		"windowFocus": windowFocus,
 		//WINDOWBLUR
