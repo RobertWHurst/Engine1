@@ -400,34 +400,34 @@ function Engine1(args) {
 			LoadingScreen.addClass('loadingScreen');
 		}
 
-		function newElement(name, spriteSheet, [x, y], [w, h]){
+		function newElement(name, spriteSheet, position, size){
 
 			//create the element and configure
 			var element = Element(sceneName, name);
 			element.sprite.sheet(spriteSheet);
-			element.position(x, y);
-			element.size(w, h);
+			element.position(position[0], position[1]);
+			element.size(size[0], size[1]);
 
 			//return the element
 			return element;
 		}
 
-		function newStaticElement(name, spriteUrl, [x, y], [w, h]){
+		function newStaticElement(name, spriteUrl, position, size){
 
 			//create the element and configure
-			var element = StaticElement(sceneName, name);
-			element.spriteUrl(spriteUrl);
-			element.position(x, y);
-			element.size(w, h);
+			var staticElement = StaticElement(sceneName, name);
+			staticElement.spriteUrl(spriteUrl);
+			staticElement.position(position[0], position[1]);
+			staticElement.size(size[0], size[1]);
 
 			//return the element
-			return element;
+			return staticElement;
 		}
 
-		function newTextElement(elementName, text, [x, y], [w, h], className) {
+		function newTextElement(elementName, text, position, size, className) {
 			var textElement = TextElement(sceneName, elementName);
-			textElement.position(x, y);
-			textElement.size(w, h);
+			textElement.position(position[0], position[1]);
+			textElement.size(size[0], size[1]);
 			textElement.html(text);
 			textElement.addClass(className);
 			textElement.hover(function () {
@@ -476,6 +476,22 @@ function Engine1(args) {
 		 */
 		function exit() {
 			hook('scene-exit-' + sceneName, arguments[0]);
+
+			//delete the all actions for scene update
+			clearHook('scene-update');
+
+			//loop through the elements and delete them
+			for (var elementName in elements[sceneName]) {
+				var element = elements[sceneName][elementName];
+
+				//delete the element's node
+				jQuery(element.node).remove();
+
+				//delete the element
+				delete elements[sceneName][elementName];
+
+			}
+
 		}
 
 		/* --------------------------------------------------
@@ -517,7 +533,7 @@ function Engine1(args) {
 			};
 			
 			action('scene-run-' + sceneName, 'scene-run-' + sceneName, function (aApi) {
-				action('scene-run-' + sceneName, 'scene-run-' + sceneName);
+				clearAction('scene-run-' + sceneName, 'scene-run-' + sceneName);
 				callback(callbackApi);
 			});
 		}
@@ -911,7 +927,10 @@ function Engine1(args) {
 		 * @param className
 		 */
 		function addClass(className) {
-			jQuery(elements[sceneName][elementName].node).addClass(className);
+			action('core-loop', 'add-class-element-' + elementName, function () {
+				clearAction('core-loop', 'add-class-element-' + elementName);
+				jQuery(elements[sceneName][elementName].node).addClass(className);
+			});
 		}
 
 		/**
@@ -919,7 +938,10 @@ function Engine1(args) {
 		 * @param className
 		 */
 		function removeClass(className) {
-			jQuery(elements[sceneName][elementName].node).removeClass(className);
+			action('core-loop', 'remove-class-element-' + elementName, function () {
+				clearAction('core-loop', 'remove-class-element-' + elementName);
+				jQuery(elements[sceneName][elementName].node).removeClass(className);
+			});
 		}
 
 		/**
@@ -1258,7 +1280,6 @@ function Engine1(args) {
 	 */
 	function TextElement(sceneName, elementName) {
 		var textElement = Element(sceneName, 'text-' + elementName);
-		textElement.size('auto', 'auto');
 		return {
 			"html": textElement.html,
 			"size": textElement.size,
@@ -1279,25 +1300,68 @@ function Engine1(args) {
 	 * Displays information about engine 1 in screen
 	 */
 	function debug () {
-		//create the fps element
-		var FPSElement = DebugElement('fps');
-		FPSElement.position(20, 20, 1000000);
-		FPSElement.html('<h1>FPS ' + config.fps + '=>?</h1>');
 
-		//create the version element
-		var versionElement = DebugElement('version');
-		versionElement.position(-20, 20, 1000000);
-		versionElement.html('<h1>Engine1 version ' + version + '</h1><p>&copy; ' + new Date().getFullYear() + ' Robert Hurst</p>');
+		(function fpsElement() {
+			//create the fps element
+			var FPSElement = DebugElement('fps');
+			FPSElement.position(20, 20, 1000000);
+			FPSElement.html('<h1>FPS ' + config.fps + '=>?</h1>');
+			action('second-loop', 'debug-fps-OSD', function () {
+				//update the fps counter
+				FPSElement.html('<h1>FPS ' + config.fps + '=>' + fps + '</h1>');
+			});
+			action('window-blur', 'debug-fps-blur-handler', function () {
+				FPSElement.html('<h1>FPS 0=>PAUSED</h1>');
+			});
+		})();
 
-		//per second actions
-		action('second-loop', 'debug-fps-OSD', function () {
-			//update the fps counter
-			FPSElement.html('<h1>FPS ' + config.fps + '=>' + fps + '</h1>');
-		});
+		(function hooksElement() {
 
-		action('window-blur', 'debug-fps-blur-handler', function () {
-			FPSElement.html('<h1>FPS 0=>PAUSED</h1>');
-		});
+			//creates html list tree of all system actions and hooks
+			function buildHtml() {
+				var title = '<h1>System Hooks</h1>\n';
+				var tableHead = '<thead><tr><td>Hook Name</td><td>Action Name</td></tr></thead>\n';
+
+				//loop through the hooks
+				var rows = '';
+				for (var hookName in hooks) {
+					var hook = hooks[hookName];
+
+					//loop through the action stack
+					var iA = 0;
+					for (var ActionName in hook) {
+						var action = hook[ActionName];
+
+
+						//hook's row
+						if ( iA < 1) {
+							rows += '<tr><td class="hook">' + hookName + '</td><td class="action first">' + ActionName + '</td></tr>\n';
+						} else {
+							rows += '<tr><td></td><td class="action">' + ActionName + '</td></tr>\n';
+						}
+
+						iA += 1;
+					}
+				}
+
+				return title + '<table class="hooks">' + tableHead + rows + '</table>';
+			}
+
+			//create the hooks element
+			var hooksElement = DebugElement('hooks');
+			hooksElement.position(-20, -20, 1000000);
+			action('second-loop', 'debug-hooks', function () {
+				//update the fps counter
+				hooksElement.html(buildHtml());
+			});
+		})();
+
+		(function versionMarker() {
+			//create the version element
+			var versionElement = DebugElement('version');
+			versionElement.position(-20, 20, 1000000);
+			versionElement.html('<h1>Engine1 version ' + version + '</h1><p>&copy; ' + new Date().getFullYear() + ' Robert Hurst</p>');
+		})();
 	}
 
 	/**
@@ -1332,8 +1396,6 @@ function Engine1(args) {
 		//make the arguments array into an array
 		var args = Array.prototype.slice.call(arguments, 0);
 		args.shift();
-
-		////
 
 		//get the hook requested
 		if (hooks[hookName]) {

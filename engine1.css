@@ -40,10 +40,17 @@
 	overflow: auto;
 	opacity: 1;
 }
-.debugElement ul {
-	list-style: none;
-	text-indent: -2em;
-	padding-left: 2em;
+.debugElement td {
+	padding: 0.2em;
+	border: 1px solid #555;
+}
+.debugElement td.hook,
+.debugElement td.first {
+	padding-top: 0.4em;
+	border-top: 1px solid #fff;
+}
+.debugElement td.action {
+	color: #ccc;
 }
 .debugElement ul ul {
 	list-style: decimal;
