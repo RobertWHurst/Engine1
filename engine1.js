@@ -25,7 +25,8 @@ function Engine1(args) {
 	   -------------------------------------------------- */
 	//containers
 	var scenes = {};
-	var views = {};
+	var maps = {};
+	var tiles = {};
 	var sprites = {};
 	var elements = {
 		"global": {}
@@ -36,7 +37,6 @@ function Engine1(args) {
 
 	//environment
 	var version = "0.04";
-	var stageSize = [0, 0];
 	var windowSize = [0, 0];
 	var paused = false;
 	var fps = 0;
@@ -44,14 +44,13 @@ function Engine1(args) {
 	var mousePosition = [0, 0];
 	var mouseDown = false;
 	var container = jQuery('<div id="engine1"></div>');
-	var stage = jQuery('<div id="stage"></div>');
+	var laterIterator = 0;
 
 	/* --------------------------------------------------
 	    PREP ENVIRONMENT
 	   -------------------------------------------------- */
-	container.append(stage);
 	$('body').html('').append(container);
-	
+
 	/* --------------------------------------------------
 	    JQUERY CHECK
 	   -------------------------------------------------- */
@@ -114,19 +113,11 @@ function Engine1(args) {
 	    WINDOW PROPERTIES
 	   -------------------------------------------------- */
 	action('core-loop', 'window-dim-counter', function(){
-		stageSize = [
-			stage.width(),
-			stage.height()
-		];
 		windowSize = [
 			container.width(),
 			container.height()
 		];
 	});
-
-	function getStageSize() {
-		return stageSize;
-	}
 
 	function getWindowSize() {
 		return windowSize;
@@ -302,15 +293,19 @@ function Engine1(args) {
 					if (currentEvent.elementName !== nextEvent.elementName) {
 
 						//fire the last callback of the current event
-						if (currentEvent && typeof currentEvent.callbacks[1] === "function") {
-							currentEvent.callbacks[1]();
+						if (currentEvent) {
+							if(typeof currentEvent.callbacks[1] === "function") {
+								currentEvent.callbacks[1]();
+							} else if (typeof currentEvent.callbacks[0] === "function") {
+								currentEvent.callbacks[0]();
+							}
 						}
 
 						//make the next event the current event
 						currentEvents[type] = currentEvent = nextEvent;
 
 						//fire the first callback of the current event
-						if (currentEvent && typeof currentEvent.callbacks[0] === "function") {
+						if (currentEvent && typeof currentEvent.callbacks[0] === "function" && typeof currentEvent.callbacks[1] === "function") {
 							currentEvent.callbacks[0]();
 						}
 					}
@@ -354,27 +349,260 @@ function Engine1(args) {
 	 * @param sceneName {string}
 	 */
 	function Scene(sceneName) {
-		//TODO: see if you can remove the actions and hooks for scene states.
 		//create a new shadow DOM
-		scenes[sceneName] = {
-			"shadowDOM": document.createDocumentFragment()
+		var scene = {
+			"node": jQuery('<div id="scene-' + sceneName + '"></div>'),
+			"position": [0, 0],
+			"size": [0, 0, true, true],
+			"CSS": {},
+			"CSSUpdated": true,
+			"onSetup": function(){},
+			"onRun": function(){},
+			"onExit": function(){}
 		};
 
-		//create the element space
+		scenes[sceneName] = scene;
 		elements[sceneName] = {};
+		maps[sceneName] = {};
+
+		//add the scene to the dom
+		container.append(scene.node);
+
+		//add the name of the scene as a class
+		addClass('scene ' + sceneName);
+
+		action('core-loop', 'scene-DOM-' + sceneName, function () {
+
+			//update css
+			if (scene.CSSUpdated){
+				scene.CSSUpdated = false;
+
+				//check the size
+				var fullWidth = scene.size[2];
+				var fullHeight = scene.size[3];
+
+				//reference the position
+				var positionX = scene.position[0];
+				var positionY = scene.position[1];
+				var positionZ = scene.position[2];
+
+				//if the size is full (useful for menus)
+				if (fullWidth) {
+					scene.size[0] = windowSize[0] + positionX;
+					scene.CSSUpdated = true;
+
+				//if not using full screen update the size based on size of the contents
+				} else {
+					scene.size[0] = scene.node.width();
+				}
+				
+				//if the size is full (useful for menus)
+				if (fullHeight) {
+					scene.size[1] = windowSize[1] + positionY;
+					scene.CSSUpdated = true;
+
+				//if not using full screen update the size based on size of the contents
+				} else {
+					scene.size[0] = scene.node.height();
+				}
+
+				//calculate the element anchor
+				var anchorX = 'left';
+				var anchorY = 'top';
+
+				//update the elements css
+				scene.CSS = jQuery.extend(scene.customCSS, {
+					"z-index": positionZ,
+					"width": scene.size[0],
+					"height": scene.size[1],
+					"position": "absolute"
+				});
+
+				//clear conflicting anchors
+				if (anchorX === "left") {
+					delete scene.CSS["right"];
+				} else {
+					delete scene.CSS["left"];
+				}
+				if (anchorY === "top") {
+					delete scene.CSS["bottom"];
+				} else {
+					delete scene.CSS["top"];
+				}
+
+				//set the anchor and the offset
+				//NOTE: the x and y are negative because the scene is often bigger than the viewport
+				scene.CSS[anchorX] = -positionX;
+				scene.CSS[anchorY] = -positionY;
+
+				//clear and re apply the css
+				//TODO When a css engine is added replace below with the engine's generating function
+				scene.node.attr('style', '').css(scene.CSS);
+
+			}
+
+			//fire the 'scene' hook
+			hook('scene-' + sceneName);
+
+		});
+
+		/* --------------------------------------------------
+		    SCENE STAGE CONTROL
+		   -------------------------------------------------- */
+
+		function setup(passedArguments) {
+
+			//clone the base api
+			var callbackApi = {
+				"loadingScreen": newScreenElement,
+				"newSpriteSheet": newSpriteSheet,
+				"run": run,
+				"exit": exit
+			};
+
+			scene.onSetup(callbackApi, passedArguments);
+
+		}
 
 		/**
-		 * Loads the next scene
-		 * @param sceneName
+		 * Advances to the 'run' stage of the scene
 		 */
-		function loadScene(sceneName) {
-			hook(sceneName + '-setup');
+		function run(passedArguments) {
+
+			var callbackApi = {
+				"newElement": newElement,
+				"newTextElement": newTextElement,
+				"newStaticElement": newStaticElement,
+				"newIsoMap": newIsoMap,
+				"exit": exit
+			};
+
+			later(function(){
+				scene.onRun(callbackApi, passedArguments);
+			}, 1);
+		}
+
+		/**
+		 * Advances to the 'exit' stage of the scene
+		 */
+		function exit(passedArguments) {
+
+			var callbackApi = {
+				//TODO Add useful api
+			};
+
+			scene.onExit(callbackApi, passedArguments);
+
+			//delete the all actions for scene update
+			clearHook('scene-' + sceneName);
+			clearAction('core-loop', 'scene-DOM-' + sceneName);
+
+			//delete the scene
+			scene.node.remove();
+
+			//clear the scene's data
+			events = {};
+			delete elements[sceneName];
+			delete maps[sceneName];
+			delete scenes[sceneName];
+
+		}
+
+		/* --------------------------------------------------
+		    SCENE STAGE CALLBACKS
+		   -------------------------------------------------- */
+
+		/**
+		 * Runs a callback for preparing a scene
+		 * @param callback {function}
+		 */
+		function onSetup(callback) {
+			if(typeof callback === "function"){
+				scene.onSetup = callback;
+			}
+		}
+
+		/**
+		 * Runs a callback when running the scene
+		 * @param callback {function}
+		 */
+		function onRun(callback) {
+			if(typeof callback === "function"){
+				scene.onRun = callback;
+			}
+		}
+
+		/**
+		 * Runs a callback when cleaning up the scene
+		 * @param callback {function}
+		 */
+		function onExit(callback) {
+			if(typeof callback === "function"){
+				scene.onExit = callback;
+			}
 		}
 
 
 		/* --------------------------------------------------
 		    SCENE API CONSTRUCTOR FUNCTIONS
 		   -------------------------------------------------- */
+		function pan(x, y) {
+			scene.CSS['left'] = '-' + x;
+			scene.CSS['top'] = '-' + y;
+			var limits = [x, y, x + scene.size[0], y + scene.size[1]];
+			hook('scene-pan-' + sceneName, limits);
+		};
+
+		function size(w, h) {
+			if (typeof w === "number") {
+				scene.size[0] = w;
+				scene.size[2] = false;
+			} else if (w === "full") {
+				scene.size[0] = 0;
+				scene.size[2] = true;
+			}
+			if (typeof h === "number") {
+				scene.size[1] = h;
+				scene.size[3] = false;
+			} else if (h === "full") {
+				scene.size[1] = 0;
+				scene.size[3] = true;
+			}
+			scene.CSSUpdated = true;
+		}
+
+		function position(z) {
+			scene.CSS['z-index'] = '-' + z;
+		}
+
+		/**
+		 * Adds a class to the element
+		 * @param className
+		 */
+		function addClass(className) {
+			later(function (){
+				scene.node.addClass(className);
+			}, 1);
+		}
+
+		/**
+		 * Removes a class from the element
+		 * @param className
+		 */
+		function removeClass(className) {
+			later(function (){
+				scene.node.removeClass(className);
+			}, 1);
+		}
+
+		/**
+		 *  Creates a new sprite sheet
+		 * @param name {string}
+		 * @param url {string}
+		 * @param width {int}
+		 * @param height {int}
+		 * @param callback {function}
+		 */
 		function newSpriteSheet(name, url, width, height, callback) {
 
 			//create and configure the spriteSheet
@@ -394,10 +622,17 @@ function Engine1(args) {
 			return spriteSheet;
 		}
 
-		function LoadingScreenElement(text, logo) {
-			var LoadingScreen = Element('global', 'loadingScreen');
-			LoadingScreen.size('full', 'full');
-			LoadingScreen.addClass('loadingScreen');
+		/**
+		 * Create a screen
+		 * @param text
+		 * @param logo
+		 */
+		function newScreenElement(html) {
+			var loadingScreen = Element('global', 'loadingScreen');
+			loadingScreen.size('full', 'full');
+			loadingScreen.addClass('loadingScreen');
+			loadingScreen.html(html);
+			return loadingScreen;
 		}
 
 		function newElement(name, spriteSheet, position, size){
@@ -438,120 +673,18 @@ function Engine1(args) {
 			return textElement;
 		}
 
-		function newView(viewName) {
-			return View(sceneName, viewName);
-		}
+		function newIsoMap(name, position, cellSize, spriteSheetName) {
 
-		/* --------------------------------------------------
-		    SCENE STAGE CONTROL
-		   -------------------------------------------------- */
+			//create the map
+			var map = IsoMap(sceneName, name);
 
-		function setup() {
-			hook('scene-setup-' + sceneName);
-		}
+			//set the cell size
+			map.position(position[0], position[1]);
+			map.cellSize(cellSize[0], cellSize[1]);
+			map.sprite.sheet(spriteSheetName);
 
-		/**
-		 * Advances to the 'run' stage of the scene
-		 */
-		function run() {
-			var hasRun = false;
-			stage.attr('class', sceneName);
-			//clone the shadow dom to the view
-			action('core-loop', 'scene-' + sceneName + '-DOM', function (api) {
-				//copy the shadowDOM into the stage
-				stage.empty();
-				stage.append(scenes[sceneName].shadowDOM.cloneNode(true));
-				//fire the 'scene-update' hook
-				hook('scene-update');
-				if(!hasRun){
-					hook('scene-run-' + sceneName);
-					hasRun = true;
-				}
-			});
-			var i =0;
-		}
+			return map;
 
-		/**
-		 * Advances to the 'exit' stage of the scene
-		 */
-		function exit() {
-			hook('scene-exit-' + sceneName, arguments[0]);
-
-			//delete the all actions for scene update
-			clearHook('scene-update');
-
-			//loop through the elements and delete them
-			for (var elementName in elements[sceneName]) {
-				var element = elements[sceneName][elementName];
-
-				//delete the element's node
-				jQuery(element.node).remove();
-
-				//delete the element
-				delete elements[sceneName][elementName];
-
-			}
-
-		}
-
-		/* --------------------------------------------------
-		    SCENE STAGE CALLBACKS
-		   -------------------------------------------------- */
-
-		/**
-		 * Runs a callback for preparing a scene
-		 * @param callback {function}
-		 */
-		function onSetup(callback) {
-
-			//clone the base api
-			var callbackApi = {
-				"loadingScreen": LoadingScreenElement,
-				"newSpriteSheet": newSpriteSheet,
-				"run": run,
-				"exit": exit
-			};
-
-			action('scene-setup-' + sceneName, 'scene-setup-' + sceneName, function () {
-				clearAction('scene-setup-' + sceneName, 'scene-setup-' + sceneName);
-				callback(callbackApi);
-			});
-		}
-
-		/**
-		 * Runs a callback when running the scene
-		 * @param callback {function}
-		 */
-		function onRun(callback) {
-
-			var callbackApi = {
-				"newElement": newElement,
-				"newTextElement": newTextElement,
-				"newStaticElement": newStaticElement,
-				"newView": newView,
-				"exit": exit
-			};
-			
-			action('scene-run-' + sceneName, 'scene-run-' + sceneName, function (aApi) {
-				clearAction('scene-run-' + sceneName, 'scene-run-' + sceneName);
-				callback(callbackApi);
-			});
-		}
-
-		/**
-		 * Runs a callback when cleaning up the scene
-		 * @param callback {function}
-		 */
-		function onExit(callback) {
-
-			var callbackApi = {
-				"loadScene": loadScene
-			};
-			
-			action('scene-exit-' + sceneName, 'scene-exit-' + sceneName, function (args) {
-				clearAction('scene-exit-' + sceneName, 'scene-exit-' + sceneName);
-				callback(callbackApi, args);
-			});
 		}
 
 		/**
@@ -564,25 +697,15 @@ function Engine1(args) {
 		//SCENE API
 		return {
 			"name": name,
-			"go": setup,
+			"init": setup,
+			"pan": pan,
+			"size": size,
+			"position": position,
 			"onSetup": onSetup,
 			"onRun": onRun,
 			"onExit": onExit,
-			"height": stage.height,
-			"width": stage.width
-		}
-	}
-
-	/**
-	 * Creates a new view of a scene.
-	 * @param sceneName {string}
-	 * @param viewName {string}
-	 */
-	function View(sceneName, viewName) {
-		//TODO: Write
-		//CLOSURE
-		return function () {
-
+			"addClass": addClass,
+			"removeClass": removeClass
 		}
 	}
 
@@ -634,14 +757,19 @@ function Engine1(args) {
 		}
 
 		function mapAlpha() {
-			if(sprites[spriteSheetName].size && sprites[spriteSheetName].image) {
+
+			//get the sprite
+			var sprite = sprites[spriteSheetName];
+
+			//make sure the sprite size and the image are defined
+			if(sprite.size && sprite.image) {
 				//create the canvas
 				var canvas = document.createElement('canvas');
 				var context = canvas.getContext('2d');
 
 				//get the image
-				var image = sprites[spriteSheetName].image;
-				var spriteSize = sprites[spriteSheetName].size;
+				var image = sprite.image;
+				var spriteSize = sprite.size;
 
 				//map the image size to the canvas
 				canvas.width = image.width;
@@ -655,13 +783,13 @@ function Engine1(args) {
 				var spritesCountY = Math.floor(image.height / spriteSize[1]);
 
 				//loop through the sprites
-				sprites[spriteSheetName].alphaData = [];
+				sprite.alphaData = [];
 				for (var currentSpriteX = 0; currentSpriteX < spritesCountX; currentSpriteX += 1) {
 					//make the sprite row array
-					sprites[spriteSheetName].alphaData[currentSpriteX] = [];
+					sprite.alphaData[currentSpriteX] = [];
 					for (var currentSpriteY = 0; currentSpriteY < spritesCountY; currentSpriteY += 1) {
 						//make the sprite column array
-						sprites[spriteSheetName].alphaData[currentSpriteX][currentSpriteY] = [];
+						sprite.alphaData[currentSpriteX][currentSpriteY] = [];
 
 						//get the current sprite's image data
 						var spritePositionX = spriteSize[0] * currentSpriteX;
@@ -675,10 +803,10 @@ function Engine1(args) {
 							var row = Math.floor(pixel / spriteSize[0]);
 							var col = pixel - (spriteSize[0] * row);
 							//extract the pixel's alpha
-							if(!sprites[spriteSheetName].alphaData[currentSpriteX][currentSpriteY][row]){
-								sprites[spriteSheetName].alphaData[currentSpriteX][currentSpriteY][row] = [];
+							if(!sprite.alphaData[currentSpriteX][currentSpriteY][row]){
+								sprite.alphaData[currentSpriteX][currentSpriteY][row] = [];
 							}
-							sprites[spriteSheetName].alphaData[currentSpriteX][currentSpriteY][row][col] = imageData[pixelDataAlpha + 3];
+							sprite.alphaData[currentSpriteX][currentSpriteY][row][col] = imageData[pixelDataAlpha + 3];
 						}
 					}
 				}
@@ -698,15 +826,16 @@ function Engine1(args) {
 	 * Creates a new element for a scene
 	 * @param sceneName {string}
 	 * @param elementName {string}
+	 * @param tilePosition {object} [optional] inserts the element in a map instead of a scene
 	 */
-	function Element(sceneName, elementName) {
+	function Element(sceneName, elementName, tilePosition) {
 
-		if (typeof elements[sceneName][elementName] !== "undefined") {
+		if (typeof element !== "undefined") {
 			throwError('Cannot create Element "' + elementName + '". It already exists', 'failure');
 			return false;
 		}
 
-		elements[sceneName][elementName] = {
+		var element = {
 			"position": [0, 0, 0, false, false],
 			"size": [0, 0, false, false],
 			"customCSS": {},
@@ -716,66 +845,69 @@ function Engine1(args) {
 			"interval": 1,
 			"currentFrame": 0,
 			"loop": false,
-			"CSSUpdated": false,
-			"node": jQuery('<div id="' + elementName + '"></div>')[0],
+			"CSSUpdated": true,
+			"node": jQuery('<div id="' + elementName + '"></div>'),
 			"events": {}
 		};
 
-		var actions = {
-			"sprite": {},
-			"motion": {},
-			"dom": {}
-		};
+		//copy the element object into the element stack
+		elements[sceneName][elementName] = element;
 
-		//add the element to the scene's dom
+		var scene;
+		var hookName;
+
 		if (sceneName !== 'global') {
-			scenes[sceneName].shadowDOM.appendChild(elements[sceneName][elementName].node);
-			var hookName = 'scene-update';
+			scene = scenes[sceneName];
+			scene.node.append(element.node);
+			hookName = 'scene-' + sceneName;
+
+		//add the element to the global scene
 		} else {
-			container.append(elements[sceneName][elementName].node);
-			var hookName = 'core-loop';
+			container.append(element.node);
+			hookName = 'core-loop';
 		}
 
 		//create an element runtime
-		action(hookName, 'update-element-' + elementName, function(){
+		action(hookName, 'element-' + elementName, function(){
 
-			if (elements[sceneName][elementName].CSSUpdated){
-				elements[sceneName][elementName].CSSUpdated = false;
+			if (element.CSSUpdated){
+				element.CSSUpdated = false;
 
 				//check the size
-				var fullWidth = elements[sceneName][elementName].size[2];
-				var fullHeight = elements[sceneName][elementName].size[3];
+				var fullWidth = element.size[2];
+				var fullHeight = element.size[3];
 
 				//if the size is full
 				if (fullWidth) {
-					elements[sceneName][elementName].size[0] = stageSize[0];
-					elements[sceneName][elementName].CSSUpdated = true;
+					element.size[0] = scene.size[0];
+					element.CSSUpdated = true;
 				}
 				if (fullHeight) {
-					elements[sceneName][elementName].size[1] = stageSize[1];
-					elements[sceneName][elementName].CSSUpdated = true;
+					element.size[1] = scene.size[1];
+					element.CSSUpdated = true;
 				}
 
 				//check the centering
-				var centerX = elements[sceneName][elementName].position[3];
-				var centerY = elements[sceneName][elementName].position[4];
+				var centerX = element.position[3];
+				var centerY = element.position[4];
 
 				//if the position is center
 				if (centerX) {
-					elements[sceneName][elementName].position[0] = Math.floor((stageSize[0] - elements[sceneName][elementName].size[0]) / 2);
-					elements[sceneName][elementName].CSSUpdated = true;
+					element.position[0] = Math.floor((scene.size[0] - element.size[0]) / 2);
+					element.CSSUpdated = true;
 				}
 				if (centerY) {
-					elements[sceneName][elementName].position[1] = Math.floor((stageSize[1] - elements[sceneName][elementName].size[1]) / 2);
-					elements[sceneName][elementName].CSSUpdated = true;
+					element.position[1] = Math.floor((scene.size[1] - element.size[1]) / 2);
+					element.position[1] = Math.floor((scene.size[1] - element.size[1]) / 2);
+					element.CSSUpdated = true;
 				}
 
 				//calculate the element anchor
 				var anchorX = 'left';
 				var anchorY = 'top';
-				var positionX = elements[sceneName][elementName].position[0];
-				var positionY = elements[sceneName][elementName].position[1];
-				var positionZ = elements[sceneName][elementName].position[2];
+				var positionX = element.position[0];
+				var positionY = element.position[1];
+				var positionZ = element.position[2];
 
 				//if the position is negative then convert it to bottom or right based positioning
 				//Note: -1 is converted to 0 from the right or left.
@@ -790,29 +922,29 @@ function Engine1(args) {
 
 				//update the elements css
 				//elements[elementName].CSS = jQuery.extend(elements[elementName].customCSS, {
-				elements[sceneName][elementName].CSS = jQuery.extend(elements[sceneName][elementName].customCSS, {
+				element.CSS = jQuery.extend(element.customCSS, {
 					"z-index": positionZ,
-					"width": elements[sceneName][elementName].size[0],
-					"height": elements[sceneName][elementName].size[1],
+					"width": element.size[0],
+					"height": element.size[1],
 					"position": "absolute"
 				});
 
 				if (anchorX === "left") {
-					delete elements[sceneName][elementName].CSS["right"];
+					delete element.CSS["right"];
 				} else {
-					delete elements[sceneName][elementName].CSS["left"];
+					delete element.CSS["left"];
 				}
 				if (anchorY === "top") {
-					delete elements[sceneName][elementName].CSS["bottom"];
+					delete element.CSS["bottom"];
 				} else {
-					delete elements[sceneName][elementName].CSS["top"];
+					delete element.CSS["top"];
 				}
 
 
-				elements[sceneName][elementName].CSS[anchorX] = positionX;
-				elements[sceneName][elementName].CSS[anchorY] = positionY;
+				element.CSS[anchorX] = positionX;
+				element.CSS[anchorY] = positionY;
 
-				jQuery(elements[sceneName][elementName].node).attr('style', '').css(elements[sceneName][elementName].CSS);
+				jQuery(element.node).attr('style', '').css(element.CSS);
 			}
 		});
 
@@ -834,7 +966,7 @@ function Engine1(args) {
 		 * Returns the element's node
 		 */
 		function node() {
-			return elements[sceneName][elementName].node;
+			return element.node;
 		}
 
 		/**
@@ -848,30 +980,30 @@ function Engine1(args) {
 
 			//check for centering
 			if(x === "center"){
-				elements[sceneName][elementName].position[3] = true;
+				element.position[3] = true;
 			}
 			if(y === "center"){
-				elements[sceneName][elementName].position[4] = true;
+				element.position[4] = true;
 			}
 
 			//check for valid positioning
 			if(typeof x === "number") {
-				elements[sceneName][elementName].position[0] = x;
+				element.position[0] = x;
 				bool = true;
 			}
 			if(typeof y === "number") {
-				elements[sceneName][elementName].position[1] = y;
+				element.position[1] = y;
 				bool = true;
 			}
 			if(typeof z === "number") {
-				elements[sceneName][elementName].position[2] = z;
+				element.position[2] = z;
 				bool = true;
 			}
 
-			elements[sceneName][elementName].CSSUpdated = bool || elements[sceneName][elementName].CSSUpdated;
+			element.CSSUpdated = bool || element.CSSUpdated;
 
 			//if 'bool' is true return true, else return the element's position
-			return (bool || elements[sceneName][elementName].position);
+			return (bool || element.position);
 		}
 
 		/**
@@ -882,22 +1014,22 @@ function Engine1(args) {
 		function size(width, height){
 			var bool = false;
 			if (width === "full") {
-				elements[sceneName][elementName].size[2] = true;
+				element.size[2] = true;
 			}
 			if (height === "full") {
-				elements[sceneName][elementName].size[3] = true;
+				element.size[3] = true;
 			}
 			if (typeof width === "number" || width === 'auto') {
-				elements[sceneName][elementName].size[0] = width;
+				element.size[0] = width;
 				bool = true;
 			}
 			if (typeof height === "number" || height === 'auto') {
-				elements[sceneName][elementName].size[1] = height;
+				element.size[1] = height;
 				bool = true;
 			}
-			elements[sceneName][elementName].CSSUpdated = bool || elements[sceneName][elementName].CSSUpdated;
+			element.CSSUpdated = bool || element.CSSUpdated;
 			//if 'bool' is true return true, else return the element's position
-			return (bool || elements[sceneName][elementName].size);
+			return (bool || element.size);
 		}
 
 		/**
@@ -912,11 +1044,11 @@ function Engine1(args) {
 			if(typeof cssObject === "string" || typeof cssObject === "object") {
 				//check for string input or object input
 				if (typeof cssObject === "string") {
-					elements[sceneName][elementName].customCSS[cssObject] = value
+					element.customCSS[cssObject] = value
 				} else {
-					elements[sceneName][elementName].customCSS = jQuery.extend(elements[sceneName][elementName].customCSS, cssObject);
+					element.customCSS = jQuery.extend(element.customCSS, cssObject);
 				}
-				elements[sceneName][elementName].CSSUpdated = true;
+				element.CSSUpdated = true;
 				return true;
 			}
 			return false;
@@ -927,10 +1059,9 @@ function Engine1(args) {
 		 * @param className
 		 */
 		function addClass(className) {
-			action('core-loop', 'add-class-element-' + elementName, function () {
-				clearAction('core-loop', 'add-class-element-' + elementName);
-				jQuery(elements[sceneName][elementName].node).addClass(className);
-			});
+			later(function (){
+				element.node.addClass(className);
+			}, 1);
 		}
 
 		/**
@@ -938,10 +1069,9 @@ function Engine1(args) {
 		 * @param className
 		 */
 		function removeClass(className) {
-			action('core-loop', 'remove-class-element-' + elementName, function () {
-				clearAction('core-loop', 'remove-class-element-' + elementName);
-				jQuery(elements[sceneName][elementName].node).removeClass(className);
-			});
+			later(function (){
+				element.node.removeClass(className);
+			}, 1);
 		}
 
 		/**
@@ -950,24 +1080,26 @@ function Engine1(args) {
 		 */
 		function html(html){
 			if (typeof html === "string") {
-				jQuery(elements[sceneName][elementName].node).html(html);
+				element.node.html(html);
 			}
 		}
 
 		function spriteAnimate(sequence, interval, loop) {
-			
+
+			var sequence = sequence || element.sequence;
+			var interval = interval || 0;
+			var loop = loop || 0;
+
 			var i = 0;
 			var fI = 0;
 			var lastBGUrl = '';
 			var lastBGPosition = [];
 			var actionId = 'sprite-animation-element-' + elementName;
-			var element = elements[sceneName][elementName];
 
 			//create the animation
-			action('scene-update', actionId, function (api) {
+			action(hookName, actionId, function (api) {
 
 				//get the element and its sprite
-				var element = elements[sceneName][elementName];
 				var sprite = sprites[element.spriteSheet];
 
 				if(i < interval) {
@@ -988,12 +1120,14 @@ function Engine1(args) {
 						var BGUrl = sprite.url;
 
 						if (lastBGUrl !== BGUrl) {
-							elements[sceneName][elementName].CSS['background'] = 'url(' + BGUrl + ')';
+							element.CSS['background'] = 'url(' + BGUrl + ')';
+							element.CSSUpdated = true;
 							lastBGUrl = BGUrl;
 						}
 
 						if (lastBGPosition !== pos) {
-							elements[sceneName][elementName].CSS['background-position'] = '-' + pos[0] + 'px -' + pos[1] + 'px';
+							element.CSS['background-position'] = '-' + pos[0] + 'px -' + pos[1] + 'px';
+							element.CSSUpdated = true;
 							lastBGPosition = pos;
 						}
 
@@ -1002,7 +1136,7 @@ function Engine1(args) {
 						if (loop) {
 							fI = 0;
 						} else {
-							clearAction('scene-update', actionId);
+							clearAction(hookName, actionId);
 						}
 					}
 					i = 0;
@@ -1016,8 +1150,8 @@ function Engine1(args) {
 		function spriteSheet(spriteName) {
 			//find the sprite
 			if (typeof sprites[spriteName] !== "undefined") {
-				elements[sceneName][elementName].spriteSheet = spriteName;
-				elements[sceneName][elementName].CSS['background'] = 'url(' + sprites[spriteName].url + ')';
+				element.spriteSheet = spriteName;
+				element.CSS['background'] = 'url(' + sprites[spriteName].url + ')';
 			}
 		}
 
@@ -1025,10 +1159,9 @@ function Engine1(args) {
 
 			var i = 0;
 			var iF = 0;
-			var element = elements[sceneName][elementName];
 
 			//create an action for the tween
-			action('scene-update', 'motion-sequence-' + elementName, function (api) {
+			action(hookName, 'motion-sequence-' + elementName, function (api) {
 
 				if(i < frameInterval) {
 					i += 1;
@@ -1062,16 +1195,16 @@ function Engine1(args) {
 					}
 
 					//move the elements position
-					elements[sceneName][elementName].position[0] = xy[0];
-					elements[sceneName][elementName].position[1] = xy[1];
-					elements[sceneName][elementName].position[2] = xy[2];
+					element.position[0] = xy[0];
+					element.position[1] = xy[1];
+					element.position[2] = xy[2];
 
 					if (iF + 1 < sequence.length) {
 						//advance the current frame
 						iF += 1;
 					} else {
 						//kill the process
-						clearAction('scene-update', 'motion-sequence-' + elementName);
+						clearAction(hookName, 'motion-sequence-' + elementName);
 
 						//run the call back
 						if (typeof callback === "funtion") {
@@ -1086,20 +1219,18 @@ function Engine1(args) {
 
 		function motionTween(finalPosition, tweenDuration, callback) {
 
-			var element = elements[sceneName][elementName];
-
 			var framesLeft = tweenDuration;
 
 			//if center or centered
 			if(finalPosition[0] === 'center'){
-				finalPosition[0] = (stage.width() - element.size[0]) / 2;
+				finalPosition[0] = (scene.size[0] - element.size[0]) / 2;
 			}
 			if(finalPosition[1] === 'center'){
-				finalPosition[1] = (stage.height() - element.height()) / 2;
+				finalPosition[1] = (scene.size[1] - element.size[1]) / 2;
 			}
 
 			//create a process
-			action('scene-update', 'motion-tween-' + elementName, function (api) {
+			action(hookName, 'motion-tween-' + elementName, function (api) {
 
 				var distance = [];
 
@@ -1110,13 +1241,14 @@ function Engine1(args) {
 					var totalDistance = (finalPosition[i] || 0) - element.position[i];
 
 					//find the distance to travel this frame in this axis
-					distance[i] = Math.round(( totalDistance / framesLeft ) + element.position[i]);
+					distance[i] = Math.round( totalDistance / framesLeft ) + element.position[i];
 				}
 
 				//apply the new location
 				element.position[0] = distance[0];
 				element.position[1] = distance[1];
 				element.position[2] = distance[2];
+				element.CSSUpdated = true;
 
 				if ( framesLeft > 1 ) {
 					//remove one frame from the frameLength
@@ -1124,8 +1256,8 @@ function Engine1(args) {
 				} else {
 
 					//kill the process
-					clearAction('scene-update', 'motion-tween-' + elementName);
-					
+					clearAction(hookName, 'motion-tween-' + elementName);
+
 					//run the callback
 					if (callback) {
 						callback();
@@ -1148,7 +1280,7 @@ function Engine1(args) {
 					"sceneName": sceneName,
 					"type": type,
 					"minAlpha": minAlpha || 255,
-					"z": elements[sceneName][elementName].position[2],
+					"z": element.position[2],
 					"callbacks": [callback1, callback2]
 				});
 			}
@@ -1176,7 +1308,12 @@ function Engine1(args) {
 
 		function unbind(type) {
 			var bool = false;
-			if (event === "hover" || event === "click") {
+			if (
+				event === "hover" ||
+				event === "click" ||
+				event === "alphahover" ||
+				event === "alphaclick"
+			) {
 				for(var i = 0; i < events.length; i += 1) {
 					if (events[i].elementName === elementName && events[i].type === type) {
 						delete events[i];
@@ -1185,6 +1322,33 @@ function Engine1(args) {
 				}
 			}
 			return bool;
+		}
+
+		/**
+		 * Remove the element
+		 */
+		function remove() {
+
+			// remove the element's events
+			for(var i = 0; i < events.length; i += 1) {
+				if (events[i].elementName === elementName) {
+					delete events[i];
+				}
+			}
+
+			//remove actions for the element
+			clearAction('scene-' + hookName, 'add-class-element-' + elementName);
+			clearAction('scene-' + hookName, 'remove-class-element-' + elementName);
+			clearAction('scene-' + hookName, 'element-' + elementName);
+			clearAction('scene-' + hookName, 'sprite-animation-element-' + elementName);
+			clearAction('scene-' + hookName, 'motion-tween-' + elementName);
+			clearAction('scene-' + hookName, 'motion-sequence-' + elementName);
+
+			//remove the element's node
+			element.node.remove();
+
+			//delete the element's data object
+			delete elements[sceneName][elementName];
 		}
 
 		// ELEMENT API
@@ -1211,7 +1375,8 @@ function Engine1(args) {
 			"alphaClick": alphaClick,
 			"hover": hover,
 			"alphaHover": alphaHover,
-			"unbind": unbind
+			"unbind": unbind,
+			"remove": remove
 		};
 
 		// ELEMENT HOOKS
@@ -1247,8 +1412,6 @@ function Engine1(args) {
 	function StaticElement(sceneName, elementName){
 		//create the element
 		var staticElement = Element(sceneName, elementName);
-
-		staticElement.css('border', '1px solid #000');
 
 		function spriteUrl (url) {
 			staticElement.css('background', 'url(' + url + ')');
@@ -1293,9 +1456,323 @@ function Engine1(args) {
 
 
 	/* --------------------------------------------------
-	    Functions
+	    ISO MAPS
 	   -------------------------------------------------- */
 
+	/**
+	 * Create an isometric map
+	 * @param sceneName
+	 * @param name
+	 */
+	function IsoMap (sceneName, mapName) {
+
+		//create a new map object
+		var map = {
+			//x, y, z
+			"position": [0, 0, 0],
+			//w, h
+			"cellSize": [0, 0],
+			"spriteSheetName": '',
+			"node": jQuery('<div id="iso-map-' + mapName + '"></div>'),
+			"rotation": 0,
+			"CSS": {},
+			"customCSS": {},
+			"CSSUpdated": true,
+			"tilesUpdated": false
+		};
+
+		maps[sceneName][mapName] = map;
+
+		scenes[sceneName].node.append(map.node);
+
+		//fill the tiles in view
+		//TODO: Only load tiles in view
+		//action('scene-pan', 'map-fill-tiles', function (limits) {
+
+		//});
+
+		//create an update loop
+		action('scene-' + sceneName, 'map', function () {
+
+			if (map.CSSUpdated) {
+				map.CSSUpdated = false;
+
+				//calculate the element anchor
+				var anchorX = 'left';
+				var anchorY = 'top';
+				var positionX = map.position[0];
+				var positionY = map.position[1];
+				var positionZ = map.position[2];
+
+				//if the position is negative then convert it to bottom or right based positioning
+				//Note: -1 is converted to 0 from the right or left.
+				if (positionX < 0) {
+					positionX = -(positionX + 1);
+					anchorX = 'right';
+				}
+				if (positionY < 0) {
+					positionY = -(positionY + 1);
+					anchorY = 'bottom';
+				}
+
+				//update the elements css
+				map.CSS = jQuery.extend(map.customCSS, {
+					"z-index": positionZ,
+					"position": "absolute"
+				});
+
+				if (anchorX === "left") {
+					delete map.CSS["right"];
+				} else {
+					delete map.CSS["left"];
+				}
+				if (anchorY === "top") {
+					delete map.CSS["bottom"];
+				} else {
+					delete map.CSS["top"];
+				}
+
+				map.CSS[anchorX] = positionX;
+				map.CSS[anchorY] = positionY;
+
+				map.node.attr('style', '').css(map.CSS);
+			}
+
+			//execute the map hook
+			hook('map');
+
+		});
+
+		/* --------------------------------------------------
+		    Tile Related
+		   -------------------------------------------------- */
+
+		/**
+		 * Retrieve a tile by its grid position
+		 * @param x {int}
+		 * @param y {int}
+		 * @param z {int}
+		 */
+		function getTile(x, y, z) {
+			return tiles[sceneName][mapName][x][y][z];
+		}
+
+		/**
+		 * Set a tile's css.
+		 * @param x {int}
+		 * @param y {int}
+		 * @param z {int}
+		 * @param css {object} An object containing the css properties and their values, or a css property name
+		 * @param value {string|int} [optional]
+		 */
+		function tileCSS(x, y, z, css, value) {
+			var tile = getTile(x, y, z);
+			if (typeof css === "string") {
+				tile.CSS[css] = value;
+			} else {
+				for (var property in css) {
+					if (css.hasOwnProperty(property)) {
+						tile.CSS[property] = css[property];
+					}
+				}
+			}
+			tile.CSSUpdated = true;
+		}
+
+		/**
+		 * Set the position of a tile's sprite in its sprite sheet
+		 * @param x {int}
+		 * @param y {int}
+		 * @param z {int}
+		 * @param spritePos {object} an array containing the x and y of the sprite
+		 */
+		function tileSpritePosition(x, y, z, spritePos) {
+			z = z || 0;
+			var tile = getTile(x, y, z);
+			tile.spritePosition = spritePos;
+			tile.CSSUpdated = true;
+		}
+
+
+		/* --------------------------------------------------
+		    Map Related
+		   -------------------------------------------------- */
+
+		/**
+		 *  Set the map position.
+		 * @param x {int}
+		 * @param y {int}
+		 */
+		function position(x, y) {
+			map.position = [x, y];
+		}
+
+		/**
+		 * Set the cell size
+		 * @param w {int}
+		 * @param h {int}
+		 */
+		function cellSize(w, h) {
+			map.cellSize = [w, h];
+		}
+
+		/**
+		 * Set the map limits
+		 * @param size {object}
+		 * @param startPosition {object}
+		 */
+		function tileCreate(size, startPosition) {
+
+			if(!size[2]) size[2] = 1;
+
+			var x = startPosition[0];
+			var y = startPosition[1];
+			var z = startPosition[2] || 0;
+
+			//get the sprite sheet
+			var spriteSheet = sprites[maps[mapName].spriteSheetName];
+
+			for (var zI = 0; zI < size[2]; zI += 1) {
+				for (var yI = 0; yI < size[1]; yI += 1) {
+					for (var xI = 0; xI < size[0]; xI += 1) {
+						var tile = IsoTile(sceneName, mapName, [x + xI, y + yI, z + zI]);
+
+						//set the background
+						tile.CSS["background"] = 'url(' + spriteSheet.url + ')';
+						tile.CSS["width"] = map.cellSize[0] + "px";
+						tile.CSS["height"] = map.cellSize[1] + "px";
+						tile.CSSUpdated = true;
+
+					}
+				}
+			}
+		}
+
+		/**
+		 * Set the sprite sheet for the tiles
+		 * @param spriteSheetName {string}
+		 */
+		function spriteSheet(spriteSheetName) {
+			map.spriteSheetName = spriteSheetName;
+		}
+
+		//add the map to the maps object
+		maps[mapName] = map;
+
+		//return API
+		return {
+			"position": position,
+			"cellSize": cellSize,
+			"tile": {
+				"create": tileCreate,
+				"css": tileCSS
+			},
+			"sprite": {
+				"sheet": spriteSheet
+			}
+		}
+	}
+
+	/**
+	 * Creates an isometric tile in a map
+	 * @param sceneName {string}
+	 * @param mapName {string}
+	 * @param gridPos {object} an array containing the x and y position
+	 */
+	function IsoTile(sceneName, mapName, gridPos) {
+
+		//define a tile name for conversation sake
+		var tileName = gridPos[0] + '-' + gridPos[1] + '-' + gridPos[2];
+
+		//create tile
+		var tile = {
+			//x, y, map layer
+			"gridPosition": gridPos,
+			//sprite x, y
+			"spritePosition": [0, 0],
+			//nw, ne, sw, se, above, below
+			"neighbors": [false, false, false, false],
+			"node": jQuery('<div id="iso-tile-' + tileName + '"></div>'),
+			"CSSUpdated": true,
+			"CSS": {},
+			"data": {}
+		};
+
+		var map = maps[sceneName][mapName];
+		map.node.append(tile.node);
+		map.tilesUpdated = true;
+
+		//run the tile update every map update
+		action('map', 'tile-' + tileName, function () {
+
+			//update the css
+			if (tile.CSSUpdated) {
+				jQuery(tile.node).css(tile.CSS);
+				map.tilesUpdated = false;
+			}
+
+			//check for neighbor tiles
+			var tileNPos = [
+				//nw
+				[gridPos[0], gridPos[1] - 1, gridPos[2]],
+				//ne
+				[gridPos[0] - 1, gridPos[1], gridPos[2]],
+				//sw
+				[gridPos[0] + 1, gridPos[1], gridPos[2]],
+				//se
+				[gridPos[0], gridPos[1] + 1, gridPos[2]],
+				//above
+				[gridPos[0], gridPos[1], gridPos[2] + 1],
+				//below
+				[gridPos[0], gridPos[1], gridPos[2] - 1]
+			];
+
+			//find/update the references to neighboring tiles
+			for (var i = 0; i < 6; i += 1) {
+				//get the current position
+				var naPos = tileNPos[i];
+				//see if there is a tile available
+				if (
+					tiles[sceneName] &&
+					tiles[sceneName][mapName] &&
+					tiles[sceneName][mapName][naPos[0]] &&
+					tiles[sceneName][mapName][naPos[0]][naPos[1]] &&
+					tiles[sceneName][mapName][naPos[0]][naPos[1]][naPos[2]]
+				) {
+					//get the neighbor and stash it
+					tile.neighbors[i] = tiles[sceneName][mapName][naPos[0]][naPos[1]][naPos[2]];
+				} else {
+					tile.neighbors[i] = false;
+				}
+			}
+
+			//call the actions for the tile
+			hook('tile-' + tileName);
+		});
+
+		//build the tile's data structure if missing
+		if (!tiles[sceneName]) {
+			tiles[sceneName] = {};
+		}
+		if (!tiles[sceneName][mapName]) {
+			tiles[sceneName][mapName] = [];
+		}
+		if (!tiles[sceneName][mapName][gridPos[0]]) {
+			tiles[sceneName][mapName][gridPos[0]] = [];
+		}
+		if (!tiles[sceneName][mapName][gridPos[0]][gridPos[1]]) {
+			tiles[sceneName][mapName][gridPos[0]][gridPos[1]] = [];
+		}
+
+		//add the tile to the tile stack and return it
+		tiles[sceneName][mapName][gridPos[0]][gridPos[1]][gridPos[2]] = tile;
+		
+		return tile;
+	}
+
+	/* --------------------------------------------------
+	    Functions
+	   -------------------------------------------------- */
 	/**
 	 * Displays information about engine 1 in screen
 	 */
@@ -1390,18 +1867,15 @@ function Engine1(args) {
 	/**
 	 * Run all actions attached to a hook
 	 * @param hookName {string}
+	 * @param passedArgument {string|object} [optional]
 	 */
-	function hook(hookName) {
-
-		//make the arguments array into an array
-		var args = Array.prototype.slice.call(arguments, 0);
-		args.shift();
+	function hook(hookName, passedArgument) {
 
 		//get the hook requested
 		if (hooks[hookName]) {
 			for (var action in hooks[hookName]) {
 				if (hooks[hookName].hasOwnProperty(action)) {
-					hooks[hookName][action](args);
+					hooks[hookName][action](passedArgument);
 				}
 			}
 		}
@@ -1441,7 +1915,9 @@ function Engine1(args) {
 	 * @param actionName
 	 */
 	function clearAction(hookName, actionName) {
-		delete hooks[hookName][actionName];
+		if(hooks[hookName][actionName]){
+			delete hooks[hookName][actionName];
+		}
 	}
 
 	/**
@@ -1452,6 +1928,41 @@ function Engine1(args) {
 		delete hooks[hookName];
 	}
 
+	function later(callback, frameDelay, hookName) {
+
+		//set the default hook name
+		hookName = hookName || 'core-loop';
+
+		//advance the iterator
+		laterIterator += 1;
+
+		//make the id
+		var id = 'later-' + laterIterator;
+
+		//define the execution function
+		function exec() {
+
+			//if the
+			if (frameDelay < 1) {
+				clearAction(hookName, id);
+				laterIterator -= 1;
+				callback();
+			} else if(typeof frameDelay === "number"){
+				frameDelay -= 1;
+			} else {
+				throwError("Tried to setup a 'later' call with an invalid delay.", "failure");
+			}
+		}
+		action(hookName, id, exec);
+	}
+
+	/**
+	 * Return's Engine1's current version
+	 */
+	function getVersion() {
+		return version;
+	}
+
 	// ENGINE API
 	return {
 		//NEW SCENE
@@ -1460,26 +1971,15 @@ function Engine1(args) {
 		"hook": hook,
 		//NEW ACTION
 		"action": action,
-		//GET STAGE SIZE
-		"getStageSize": getStageSize,
 		//GET WINDOW SIZE
 		"getWindowSize": getWindowSize,
 		//WINDOWBLUR
 		"windowFocus": windowFocus,
 		//WINDOWBLUR
 		"windowBlur": windowBlur,
+		//THROW ERROR
+		"throwError": throwError,
 		//GET VERSION
-		"version": version
+		"engine1": getVersion
 	};
 }
-	
-/* --------------------------------------------------
-	BORROWED BITS
-   -------------------------------------------------- */
-
-// Array Remove - By John Resig (MIT Licensed)
-Array.prototype.remove = function(from, to) {
-	var rest = this.slice((to || from) + 1 || this.length);
-	this.length = from < 0 ? this.length + from : from;
-	return this.push.apply(this, rest);
-};
